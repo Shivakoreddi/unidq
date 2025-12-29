@@ -2,7 +2,7 @@
 UNIDQ: Unified Transformer for Multi-Task Data Quality
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __author__ = "shivakoreddi, sravanisowrupilli"
 
 from .model import UNIDQ, UNIDQConfig

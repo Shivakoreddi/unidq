@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unidq"
-version = "0.1.2"
+version = "0.1.3"
 authors = [
     {name = "shivakoreddi, sravanisowrupilli", email = "your.email@example.com"},
 ]
@@ -49,10 +49,10 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/unidq"
+Homepage = "https://github.com/Shivakoreddi/unidq"
 Documentation = "https://unidq.readthedocs.io"
-Repository = "https://github.com/yourusername/unidq"
-Issues = "https://github.com/yourusername/unidq/issues"
+Repository = "https://github.com/Shivakoreddi/unidq"
+Issues = "https://github.com/Shivakoreddi/unidq/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
