@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Downloads](https://pepy.tech/badge/unidq)](https://pepy.tech/project/unidq)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Shivakoreddi%2Funidq-blue?logo=github)](https://github.com/Shivakoreddi/unidq)
+[![GitHub Stars](https://img.shields.io/github/stars/Shivakoreddi/unidq?style=social)](https://github.com/Shivakoreddi/unidq/stargazers)
 
 **A unified transformer architecture for multi-task data quality assessment.**
 
@@ -57,7 +59,7 @@ pip install unidq
 ### From Source
 
 ```bash
-git clone [git_loc]
+git clone https://github.com/Shivakoreddi/unidq.git
 cd unidq
 pip install -e .
 ```
