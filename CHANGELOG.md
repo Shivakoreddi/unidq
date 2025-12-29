@@ -13,6 +13,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Performance optimizations
 - Documentation improvements
 
+## [0.1.4] - 2024-12-29
+
+### Added
+- Comprehensive user documentation and usage guide
+- Detailed examples for all 6 data quality tasks
+- FAQ section
+- Performance benchmarks
+- Complete API usage examples
+
+### Documentation
+- Full usage guide with code examples
+- DataFrame integration examples
+- Training and configuration guides
+- Troubleshooting section
+
+## [0.1.3] - 2024-12-29
+
+### Added
+- GitHub repository integration
+- GitHub badges in README
+- Repository links in PyPI metadata
+
+### Changed
+- Updated project URLs to point to GitHub repository
+
+## [0.1.2] - 2024-12-28
+
+### Changed
+- Updated author information
+- Updated citation with author names
+
+## [0.1.1] - 2024-12-28
+
+### Changed
+- Updated author metadata
+
 ## [0.1.0] - 2024-12-28
 
 ### Added
