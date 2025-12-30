@@ -179,16 +179,4 @@ class TestModelComponents:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
-[distutils]
-index-servers =
-    pypi
-    testpypi
 
-[pypi]
-username = __token__
-password = pypi-YOUR-REAL-PYPI-TOKEN-HERE
-
-[testpypi]
-repository = https://test.pypi.org/legacy/
-username = __token__
-password = pypi-YOUR-TESTPYPI-TOKEN-HERE

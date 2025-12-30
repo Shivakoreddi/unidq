@@ -1,0 +1,30 @@
+# CODEOWNERS file for UNIDQ
+# See https://help.github.com/articles/about-code-owners/
+
+# Default owners for everything in the repo
+* @Shivakoreddi @sravanisowrupilli
+
+# Core model architecture
+/unidq/model.py @Shivakoreddi
+/unidq/trainer.py @Shivakoreddi
+
+# Dataset and evaluation
+/unidq/dataset.py @sravanisowrupilli
+/unidq/evaluation.py @sravanisowrupilli
+
+# Documentation
+/docs/ @Shivakoreddi @sravanisowrupilli
+*.md @Shivakoreddi @sravanisowrupilli
+
+# Tests
+/tests/ @Shivakoreddi @sravanisowrupilli
+
+# CI/CD
+/.github/ @Shivakoreddi
+
+# Package configuration
+/pyproject.toml @Shivakoreddi
+/setup.py @Shivakoreddi
+
+# Build and deployment
+/scripts/ @Shivakoreddi

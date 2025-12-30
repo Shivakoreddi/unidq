@@ -359,6 +359,43 @@ UNIDQ achieves strong results across all tasks:
 
 ---
 
+## Release Methodology
+
+UNIDQ follows [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH):
+
+- **MAJOR** (e.g., 1.0.0 → 2.0.0): Breaking API changes
+- **MINOR** (e.g., 0.1.0 → 0.2.0): New features, backwards compatible
+- **PATCH** (e.g., 0.1.5 → 0.1.6): Bug fixes, backwards compatible
+
+### Release Schedule
+
+- **Patch releases**: As needed for critical bug fixes
+- **Minor releases**: Monthly or when significant features are ready
+- **Major releases**: When necessary for breaking changes
+
+### PyTorch Compatibility
+
+UNIDQ supports the latest two major PyTorch releases. We update within 30 days of new PyTorch releases to ensure compatibility.
+
+Current support:
+- PyTorch 1.9.0+
+- PyTorch 2.0.0+
+- PyTorch 2.1.0+
+
+### How to Stay Updated
+
+```bash
+# Upgrade to latest version
+pip install --upgrade unidq
+
+# Check your version
+python -c "import unidq; print(unidq.__version__)"
+```
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes and [CONTRIBUTING.md](CONTRIBUTING.md) for the complete release process.
+
+---
+
 ## FAQ
 
 **Q: Do I need labeled data to use UNIDQ?**
