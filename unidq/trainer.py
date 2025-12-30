@@ -1,251 +1,478 @@
 """
-Training utilities for UNIDQ
+UNIDQ Trainer
+=============
+
+Training utilities for the UNIDQ model.
 """
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from typing import Dict, Optional, Callable
+from torch.utils.data import DataLoader, Dataset, Subset
+from typing import Optional, Dict, Callable, List, Union
+import numpy as np
 from tqdm import tqdm
-import os
+
+from .model import UNIDQ
+from .evaluation import evaluate_all_tasks
 
 
-class UNIDQTrainer:
+class MultiTaskLoss(nn.Module):
     """
-    Trainer class for UNIDQ multi-task learning.
+    Multi-task loss function for UNIDQ.
+    
+    Combines losses from all 6 tasks with configurable weights.
+    
+    Parameters
+    ----------
+    task_weights : Dict[str, float], optional
+        Weights for each task loss. Default weights are tuned for
+        balanced multi-task learning.
     """
     
     def __init__(
         self,
-        model: nn.Module,
-        train_dataloader: DataLoader,
-        val_dataloader: Optional[DataLoader] = None,
-        optimizer: Optional[torch.optim.Optimizer] = None,
         task_weights: Optional[Dict[str, float]] = None,
-        device: Optional[torch.device] = None,
     ):
-        """
-        Initialize the trainer.
+        super().__init__()
         
-        Args:
-            model: UNIDQ model
-            train_dataloader: Training data loader
-            val_dataloader: Validation data loader (optional)
-            optimizer: Optimizer (if None, uses Adam)
-            task_weights: Weights for each task loss
-            device: Device to train on
-        """
-        self.model = model
-        self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        self.model.to(self.device)
-        
-        # Initialize optimizer
-        if optimizer is None:
-            self.optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-        else:
-            self.optimizer = optimizer
-        
-        # Task weights (equal by default)
+        # Default task weights (tuned for balanced learning)
         self.task_weights = task_weights or {
-            'error_detection': 1.0,
-            'imputation': 1.0,
-            'schema_matching': 1.0,
-            'duplicate_detection': 1.0,
-            'outlier_detection': 1.0,
+            'error': 1.0,      # Primary task
+            'repair': 0.5,     # Secondary task
+            'impute': 0.5,     # Secondary task
+            'label_clf': 0.3,  # Auxiliary task
+            'noise': 0.5,      # Important for noisy data
+            'value': 0.3,      # Auxiliary task
         }
         
-        # Loss functions for different tasks
-        self.loss_functions = {
-            'error_detection': nn.CrossEntropyLoss(),
-            'imputation': nn.CrossEntropyLoss(),
-            'schema_matching': nn.MSELoss(),
-            'duplicate_detection': nn.CrossEntropyLoss(),
-            'outlier_detection': nn.CrossEntropyLoss(),
-        }
+        # Class weights for imbalanced tasks
+        self.error_weights = None
+        self.noise_weights = None
     
-    def train_epoch(self) -> Dict[str, float]:
+    def forward(
+        self,
+        outputs: Dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
+        device: torch.device,
+    ) -> tuple:
         """
-        Train for one epoch.
+        Compute multi-task loss.
         
-        Returns:
-            Dictionary of average losses per task
+        Parameters
+        ----------
+        outputs : Dict[str, torch.Tensor]
+            Model outputs
+        batch : Dict[str, torch.Tensor]
+            Batch data
+        device : torch.device
+            Device for computation
+            
+        Returns
+        -------
+        tuple
+            (total_loss, dict of individual losses)
         """
+        losses = {}
+        
+        # Initialize class weights on correct device
+        if self.error_weights is None or self.error_weights.device != device:
+            self.error_weights = torch.tensor([1.0, 3.0], device=device)
+            self.noise_weights = torch.tensor([1.0, 4.0], device=device)
+        
+        # =====================================================================
+        # Task 1: Error Detection (Weighted Cross-Entropy)
+        # =====================================================================
+        error_logits = outputs['error_logits']
+        error_labels = batch['error_mask'].to(device)
+        losses['error'] = nn.functional.cross_entropy(
+            error_logits.reshape(-1, 2),
+            error_labels.reshape(-1).long(),
+            weight=self.error_weights
+        )
+        
+        # =====================================================================
+        # Task 2: Data Repair (MSE on erroneous cells only)
+        # =====================================================================
+        repair_pred = outputs['repair_pred']
+        repair_target = batch['clean_features'].to(device)
+        repair_mask = batch['repair_mask'].to(device)
+        
+        if repair_mask.sum() > 0:
+            losses['repair'] = nn.functional.mse_loss(
+                repair_pred * repair_mask,
+                repair_target * repair_mask
+            )
+        else:
+            losses['repair'] = torch.tensor(0.0, device=device)
+        
+        # =====================================================================
+        # Task 3: Missing Value Imputation (MSE on missing cells only)
+        # =====================================================================
+        impute_pred = outputs['impute_pred']
+        impute_target = batch['impute_targets'].to(device)
+        impute_mask = batch['missing_mask'].to(device)
+        
+        if impute_mask.sum() > 0:
+            losses['impute'] = nn.functional.mse_loss(
+                impute_pred * impute_mask,
+                impute_target * impute_mask
+            )
+        else:
+            losses['impute'] = torch.tensor(0.0, device=device)
+        
+        # =====================================================================
+        # Task 4: Label Classification (Cross-Entropy)
+        # =====================================================================
+        losses['label_clf'] = nn.functional.cross_entropy(
+            outputs['label_logits'],
+            batch['clean_label'].to(device)
+        )
+        
+        # =====================================================================
+        # Task 5: Label Noise Detection (Weighted Cross-Entropy)
+        # =====================================================================
+        losses['noise'] = nn.functional.cross_entropy(
+            outputs['noise_logits'],
+            batch['noise_label'].to(device),
+            weight=self.noise_weights
+        )
+        
+        # =====================================================================
+        # Task 6: Data Valuation (MSE)
+        # =====================================================================
+        losses['value'] = nn.functional.mse_loss(
+            outputs['value_pred'],
+            batch['quality_score'].to(device)
+        )
+        
+        # Compute weighted total loss
+        total_loss = sum(self.task_weights[k] * v for k, v in losses.items())
+        
+        return total_loss, losses
+
+
+class UNIDQTrainer:
+    """
+    Trainer for UNIDQ model.
+    
+    Handles training loop, validation, early stopping, and checkpointing.
+    
+    Parameters
+    ----------
+    model : UNIDQ
+        Model to train
+    device : torch.device, optional
+        Device for training. Auto-detected if None.
+    task_weights : Dict[str, float], optional
+        Weights for multi-task loss
+        
+    Example
+    -------
+    >>> model = UNIDQ(n_features=14)
+    >>> trainer = UNIDQTrainer(model)
+    >>> trainer.fit(train_dataset, val_dataset, epochs=50)
+    """
+    
+    def __init__(
+        self,
+        model: UNIDQ,
+        device: Optional[torch.device] = None,
+        task_weights: Optional[Dict[str, float]] = None,
+    ):
+        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = model.to(self.device)
+        self.loss_fn = MultiTaskLoss(task_weights)
+        
+        # Training state
+        self.optimizer = None
+        self.scheduler = None
+        self.history = {'train_loss': [], 'val_loss': [], 'val_metrics': []}
+        self.best_state = None
+        self.best_score = -float('inf')
+    
+    def fit(
+        self,
+        train_dataset: Dataset,
+        val_dataset: Optional[Dataset] = None,
+        epochs: int = 50,
+        batch_size: int = 64,
+        learning_rate: float = 5e-4,
+        weight_decay: float = 0.01,
+        patience: int = 10,
+        verbose: bool = True,
+        checkpoint_path: Optional[str] = None,
+    ) -> Dict[str, List]:
+        """
+        Train the model.
+        
+        Parameters
+        ----------
+        train_dataset : Dataset
+            Training dataset
+        val_dataset : Dataset, optional
+            Validation dataset for early stopping
+        epochs : int, default=50
+            Number of training epochs
+        batch_size : int, default=64
+            Batch size
+        learning_rate : float, default=5e-4
+            Learning rate
+        weight_decay : float, default=0.01
+            Weight decay for AdamW
+        patience : int, default=10
+            Early stopping patience
+        verbose : bool, default=True
+            Print progress
+        checkpoint_path : str, optional
+            Path to save best model
+            
+        Returns
+        -------
+        Dict[str, List]
+            Training history
+        """
+        # Create data loaders
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+            pin_memory=True if self.device.type == 'cuda' else False
+        )
+        
+        val_loader = None
+        if val_dataset is not None:
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=0
+            )
+        
+        # Initialize optimizer and scheduler
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay
+        )
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=epochs
+        )
+        
+        # Training loop
+        no_improvement = 0
+        
+        for epoch in range(epochs):
+            # Train
+            train_loss = self._train_epoch(train_loader)
+            self.history['train_loss'].append(train_loss)
+            
+            # Validate
+            if val_loader is not None:
+                val_loss, val_metrics = self._validate(val_loader)
+                self.history['val_loss'].append(val_loss)
+                self.history['val_metrics'].append(val_metrics)
+                
+                # Early stopping based on combined score
+                score = val_metrics.get('error_f1', 0) + 0.5 * val_metrics.get('noise_f1', 0)
+                
+                if score > self.best_score:
+                    self.best_score = score
+                    self.best_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+                    no_improvement = 0
+                    
+                    if checkpoint_path:
+                        self.model.save(checkpoint_path)
+                else:
+                    no_improvement += 1
+                
+                if verbose and (epoch + 1) % 5 == 0:
+                    print(f"Epoch {epoch+1}/{epochs} - "
+                          f"Train Loss: {train_loss:.4f}, "
+                          f"Val Loss: {val_loss:.4f}, "
+                          f"Error F1: {val_metrics.get('error_f1', 0):.4f}, "
+                          f"Noise F1: {val_metrics.get('noise_f1', 0):.4f}")
+                
+                # Early stopping
+                if no_improvement >= patience:
+                    if verbose:
+                        print(f"Early stopping at epoch {epoch+1}")
+                    break
+            else:
+                if verbose and (epoch + 1) % 5 == 0:
+                    print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}")
+            
+            self.scheduler.step()
+        
+        # Load best model
+        if self.best_state is not None:
+            self.model.load_state_dict(self.best_state)
+        
+        return self.history
+    
+    def _train_epoch(self, dataloader: DataLoader) -> float:
+        """Train for one epoch."""
         self.model.train()
-        epoch_losses = {task: 0.0 for task in self.task_weights.keys()}
-        epoch_losses['total'] = 0.0
+        total_loss = 0.0
+        n_batches = 0
         
-        progress_bar = tqdm(self.train_dataloader, desc="Training")
-        
-        for batch in progress_bar:
-            # Move batch to device
-            batch = {k: v.to(self.device) for k, v in batch.items()}
+        for batch in dataloader:
+            # Move data to device
+            features = batch['dirty_features'].to(self.device)
+            z_scores = batch['z_scores'].to(self.device)
+            dirty_labels = batch['dirty_label'].to(self.device)
             
             # Forward pass
-            input_ids = batch['input_ids']
-            attention_mask = batch['attention_mask']
+            outputs = self.model(features, z_scores, dirty_labels)
             
-            outputs = self.model(input_ids, attention_mask)
-            
-            # Compute losses
-            total_loss = 0.0
-            batch_losses = {}
-            
-            for task_name, task_output in outputs.items():
-                label_key = f'{task_name}_labels'
-                
-                if label_key in batch:
-                    labels = batch[label_key]
-                    loss_fn = self.loss_functions.get(task_name, nn.MSELoss())
-                    
-                    # Reshape for classification tasks
-                    if task_name in ['error_detection', 'duplicate_detection', 'outlier_detection']:
-                        # task_output: [batch, seq_len, num_classes]
-                        # labels: [batch, seq_len] or [batch]
-                        if labels.dim() == 1:
-                            # Aggregate sequence predictions (use mean pooling)
-                            task_output = task_output.mean(dim=1)
-                        else:
-                            # Flatten for sequence labeling
-                            task_output = task_output.view(-1, task_output.size(-1))
-                            labels = labels.view(-1)
-                    
-                    loss = loss_fn(task_output, labels)
-                    weighted_loss = self.task_weights[task_name] * loss
-                    total_loss += weighted_loss
-                    
-                    batch_losses[task_name] = loss.item()
-                    epoch_losses[task_name] += loss.item()
-            
-            epoch_losses['total'] += total_loss.item()
+            # Compute loss
+            loss, _ = self.loss_fn(outputs, batch, self.device)
             
             # Backward pass
             self.optimizer.zero_grad()
-            total_loss.backward()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
             
-            # Update progress bar
-            progress_bar.set_postfix(batch_losses)
+            total_loss += loss.item()
+            n_batches += 1
         
-        # Average losses
-        num_batches = len(self.train_dataloader)
-        for key in epoch_losses:
-            epoch_losses[key] /= num_batches
-        
-        return epoch_losses
+        return total_loss / max(n_batches, 1)
     
-    def evaluate(self) -> Dict[str, float]:
-        """
-        Evaluate on validation set.
-        
-        Returns:
-            Dictionary of average losses per task
-        """
-        if self.val_dataloader is None:
-            return {}
-        
+    def _validate(self, dataloader: DataLoader) -> tuple:
+        """Validate the model."""
         self.model.eval()
-        eval_losses = {task: 0.0 for task in self.task_weights.keys()}
-        eval_losses['total'] = 0.0
+        total_loss = 0.0
+        n_batches = 0
         
         with torch.no_grad():
-            for batch in tqdm(self.val_dataloader, desc="Evaluating"):
-                # Move batch to device
-                batch = {k: v.to(self.device) for k, v in batch.items()}
+            for batch in dataloader:
+                features = batch['dirty_features'].to(self.device)
+                z_scores = batch['z_scores'].to(self.device)
+                dirty_labels = batch['dirty_label'].to(self.device)
                 
-                # Forward pass
-                input_ids = batch['input_ids']
-                attention_mask = batch['attention_mask']
+                outputs = self.model(features, z_scores, dirty_labels)
+                loss, _ = self.loss_fn(outputs, batch, self.device)
                 
-                outputs = self.model(input_ids, attention_mask)
-                
-                # Compute losses
-                total_loss = 0.0
-                
-                for task_name, task_output in outputs.items():
-                    label_key = f'{task_name}_labels'
-                    
-                    if label_key in batch:
-                        labels = batch[label_key]
-                        loss_fn = self.loss_functions.get(task_name, nn.MSELoss())
-                        
-                        # Reshape for classification tasks
-                        if task_name in ['error_detection', 'duplicate_detection', 'outlier_detection']:
-                            if labels.dim() == 1:
-                                task_output = task_output.mean(dim=1)
-                            else:
-                                task_output = task_output.view(-1, task_output.size(-1))
-                                labels = labels.view(-1)
-                        
-                        loss = loss_fn(task_output, labels)
-                        weighted_loss = self.task_weights[task_name] * loss
-                        total_loss += weighted_loss
-                        
-                        eval_losses[task_name] += loss.item()
-                
-                eval_losses['total'] += total_loss.item()
+                total_loss += loss.item()
+                n_batches += 1
         
-        # Average losses
-        num_batches = len(self.val_dataloader)
-        for key in eval_losses:
-            eval_losses[key] /= num_batches
+        # Compute metrics
+        metrics = evaluate_all_tasks(self.model, dataloader, self.device)
         
-        return eval_losses
+        return total_loss / max(n_batches, 1), metrics
     
-    def train(
-        self,
-        num_epochs: int,
-        save_dir: Optional[str] = None,
-        save_best: bool = True,
-    ) -> Dict[str, list]:
+    def evaluate(self, dataset: Dataset, batch_size: int = 64) -> Dict[str, float]:
         """
-        Train the model for multiple epochs.
+        Evaluate model on a dataset.
         
-        Args:
-            num_epochs: Number of training epochs
-            save_dir: Directory to save checkpoints
-            save_best: Whether to save the best model
+        Parameters
+        ----------
+        dataset : Dataset
+            Dataset to evaluate
+        batch_size : int, default=64
+            Batch size
             
-        Returns:
-            Training history
+        Returns
+        -------
+        Dict[str, float]
+            Evaluation metrics
         """
-        history = {
-            'train_loss': [],
-            'val_loss': [],
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        return evaluate_all_tasks(self.model, dataloader, self.device)
+
+
+def cross_validate(
+    model_class,
+    dataset: Dataset,
+    n_features: int,
+    n_folds: int = 5,
+    epochs: int = 50,
+    batch_size: int = 64,
+    random_seed: int = 42,
+    verbose: bool = True,
+    **model_kwargs
+) -> Dict[str, List[float]]:
+    """
+    Perform k-fold cross-validation.
+    
+    Parameters
+    ----------
+    model_class : type
+        Model class (e.g., UNIDQ)
+    dataset : Dataset
+        Full dataset
+    n_features : int
+        Number of features
+    n_folds : int, default=5
+        Number of folds
+    epochs : int, default=50
+        Training epochs per fold
+    batch_size : int, default=64
+        Batch size
+    random_seed : int, default=42
+        Random seed for reproducibility
+    verbose : bool, default=True
+        Print progress
+    **model_kwargs
+        Additional arguments for model initialization
+        
+    Returns
+    -------
+    Dict[str, List[float]]
+        Cross-validation results for each metric
+    """
+    from sklearn.model_selection import KFold
+    
+    kf = KFold(n_splits=n_folds, shuffle=True, random_state=random_seed)
+    
+    fold_results = []
+    
+    for fold, (train_idx, val_idx) in enumerate(kf.split(range(len(dataset)))):
+        if verbose:
+            print(f"\n--- Fold {fold+1}/{n_folds} ---")
+        
+        # Create subsets
+        train_ds = Subset(dataset, train_idx.tolist())
+        val_ds = Subset(dataset, val_idx.tolist())
+        
+        # Initialize model and trainer
+        model = model_class(n_features=n_features, **model_kwargs)
+        trainer = UNIDQTrainer(model)
+        
+        # Train
+        trainer.fit(
+            train_ds, val_ds,
+            epochs=epochs,
+            batch_size=batch_size,
+            verbose=False
+        )
+        
+        # Evaluate
+        results = trainer.evaluate(val_ds)
+        fold_results.append(results)
+        
+        if verbose:
+            print(f"  Error F1: {results['error_f1']:.4f}, "
+                  f"Noise F1: {results['noise_f1']:.4f}, "
+                  f"Repair R²: {results['repair_r2']:.4f}")
+    
+    # Aggregate results
+    all_metrics = {}
+    for metric in fold_results[0].keys():
+        values = [r[metric] for r in fold_results]
+        all_metrics[metric] = {
+            'values': values,
+            'mean': np.mean(values),
+            'std': np.std(values)
         }
-        
-        best_val_loss = float('inf')
-        
-        for epoch in range(num_epochs):
-            print(f"\nEpoch {epoch + 1}/{num_epochs}")
-            
-            # Train
-            train_losses = self.train_epoch()
-            history['train_loss'].append(train_losses['total'])
-            
-            print(f"Training Loss: {train_losses['total']:.4f}")
-            for task, loss in train_losses.items():
-                if task != 'total':
-                    print(f"  {task}: {loss:.4f}")
-            
-            # Evaluate
-            if self.val_dataloader is not None:
-                val_losses = self.evaluate()
-                history['val_loss'].append(val_losses['total'])
-                
-                print(f"Validation Loss: {val_losses['total']:.4f}")
-                for task, loss in val_losses.items():
-                    if task != 'total':
-                        print(f"  {task}: {loss:.4f}")
-                
-                # Save best model
-                if save_best and val_losses['total'] < best_val_loss:
-                    best_val_loss = val_losses['total']
-                    if save_dir:
-                        os.makedirs(save_dir, exist_ok=True)
-                        self.model.save_pretrained(os.path.join(save_dir, 'best_model'))
-                        print(f"Saved best model to {save_dir}/best_model")
-        
-        return history
+    
+    if verbose:
+        print("\n" + "="*50)
+        print("Cross-Validation Results (Mean ± Std)")
+        print("="*50)
+        for metric, stats in all_metrics.items():
+            print(f"  {metric}: {stats['mean']:.4f} ± {stats['std']:.4f}")
+    
+    return all_metrics

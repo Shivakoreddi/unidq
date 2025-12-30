@@ -1,158 +1,298 @@
 """
-Multi-Task Dataset Implementation
+UNIDQ Dataset
+=============
+
+Dataset class for multi-task data quality training.
 """
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
-from typing import Dict, List, Optional, Tuple
-import pandas as pd
-import numpy as np
+from typing import Optional, Dict, Union
 
 
 class MultiTaskDataset(Dataset):
     """
-    Dataset for multi-task data quality learning.
+    Dataset for multi-task data quality training.
     
-    Handles data loading and preprocessing for multiple data quality tasks.
+    Handles data for all 6 tasks:
+    1. Error Detection
+    2. Data Repair
+    3. Missing Value Imputation
+    4. Label Noise Detection
+    5. Label Classification
+    6. Data Valuation
+    
+    Parameters
+    ----------
+    dirty_features : np.ndarray
+        Dirty/corrupted features, shape (n_samples, n_features)
+    clean_features : np.ndarray, optional
+        Clean/ground-truth features, shape (n_samples, n_features)
+        If None, uses dirty_features
+    error_mask : np.ndarray, optional
+        Binary mask indicating errors, shape (n_samples, n_features)
+        1 = error, 0 = clean
+    missing_mask : np.ndarray, optional
+        Binary mask indicating missing values, shape (n_samples, n_features)
+    labels : np.ndarray, optional
+        Observed (potentially noisy) labels, shape (n_samples,)
+    clean_labels : np.ndarray, optional
+        Ground-truth labels, shape (n_samples,)
+        If None, uses labels
+    noise_mask : np.ndarray, optional
+        Binary mask indicating noisy labels, shape (n_samples,)
+        1 = noisy, 0 = clean
+        
+    Example
+    -------
+    >>> dataset = MultiTaskDataset(
+    ...     dirty_features=X_dirty,
+    ...     clean_features=X_clean,
+    ...     error_mask=errors,
+    ...     labels=y_noisy,
+    ...     clean_labels=y_clean
+    ... )
+    >>> batch = dataset[0]
+    >>> print(batch.keys())
     """
     
     def __init__(
         self,
-        data: pd.DataFrame,
-        task_labels: Dict[str, pd.Series],
-        tokenizer: Optional[callable] = None,
-        max_length: int = 512,
+        dirty_features: np.ndarray,
+        clean_features: Optional[np.ndarray] = None,
+        error_mask: Optional[np.ndarray] = None,
+        missing_mask: Optional[np.ndarray] = None,
+        labels: Optional[np.ndarray] = None,
+        clean_labels: Optional[np.ndarray] = None,
+        noise_mask: Optional[np.ndarray] = None,
+        compute_z_scores: bool = True,
     ):
-        """
-        Initialize the multi-task dataset.
+        # Convert to float32
+        self.dirty = dirty_features.astype(np.float32)
+        self.n_samples, self.n_features = self.dirty.shape
         
-        Args:
-            data: Input dataframe
-            task_labels: Dictionary mapping task names to label series
-            tokenizer: Tokenization function
-            max_length: Maximum sequence length
-        """
-        self.data = data
-        self.task_labels = task_labels
-        self.tokenizer = tokenizer or self._default_tokenizer
-        self.max_length = max_length
+        # Clean features (default to dirty if not provided)
+        if clean_features is not None:
+            self.clean = clean_features.astype(np.float32)
+        else:
+            self.clean = self.dirty.copy()
         
-        # Validate data
-        assert len(data) > 0, "Dataset cannot be empty"
-        for task_name, labels in task_labels.items():
-            assert len(labels) == len(data), f"Label length mismatch for task: {task_name}"
+        # Error mask (default to zeros)
+        if error_mask is not None:
+            self.error_mask = error_mask.astype(np.float32)
+        else:
+            self.error_mask = np.zeros((self.n_samples, self.n_features), dtype=np.float32)
+        
+        # Missing mask (default to zeros)
+        if missing_mask is not None:
+            self.missing_mask = missing_mask.astype(np.float32)
+        else:
+            self.missing_mask = np.zeros((self.n_samples, self.n_features), dtype=np.float32)
+        
+        # Labels (default to zeros)
+        if labels is not None:
+            self.labels = labels.astype(np.int64)
+        else:
+            self.labels = np.zeros(self.n_samples, dtype=np.int64)
+        
+        # Clean labels (default to observed labels)
+        if clean_labels is not None:
+            self.clean_labels = clean_labels.astype(np.int64)
+        else:
+            self.clean_labels = self.labels.copy()
+        
+        # Noise mask (default to zeros)
+        if noise_mask is not None:
+            self.noise_mask = noise_mask.astype(np.float32)
+        else:
+            self.noise_mask = np.zeros(self.n_samples, dtype=np.float32)
+        
+        # Compute z-scores for anomaly detection
+        if compute_z_scores:
+            self._compute_z_scores()
+        else:
+            self.z_scores = np.zeros_like(self.dirty)
+        
+        # Handle NaN values
+        self._handle_nan()
+        
+        # Compute quality scores for data valuation
+        self._compute_quality_scores()
+    
+    def _compute_z_scores(self):
+        """Compute z-scores for each feature."""
+        mean = np.nanmean(self.dirty, axis=0)
+        std = np.nanstd(self.dirty, axis=0) + 1e-8
+        self.z_scores = np.abs((self.dirty - mean) / std)
+        self.z_scores = np.nan_to_num(self.z_scores, nan=0.0)
+    
+    def _handle_nan(self):
+        """Replace NaN values with zeros."""
+        self.dirty = np.nan_to_num(self.dirty, nan=0.0)
+        self.clean = np.nan_to_num(self.clean, nan=0.0)
+        self.z_scores = np.nan_to_num(self.z_scores, nan=0.0)
+    
+    def _compute_quality_scores(self):
+        """Compute data quality scores for each sample."""
+        # Error rate per sample
+        error_rate = self.error_mask.mean(axis=1)
+        
+        # Missing rate per sample
+        missing_rate = self.missing_mask.mean(axis=1)
+        
+        # Quality score: higher is better
+        self.quality_scores = (1.0 - 0.5 * error_rate - 0.5 * missing_rate).astype(np.float32)
     
     def __len__(self) -> int:
-        """Return the number of samples."""
-        return len(self.data)
+        return self.n_samples
     
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
         Get a single sample.
         
-        Args:
-            idx: Sample index
-            
-        Returns:
-            Dictionary containing input_ids, attention_mask, and task labels
+        Returns
+        -------
+        Dict[str, torch.Tensor]
+            Dictionary containing:
+            - dirty_features: Input features
+            - z_scores: Z-scores for anomaly detection
+            - error_mask: Binary error mask
+            - clean_features: Ground-truth features
+            - repair_mask: Mask for repair task (same as error_mask)
+            - missing_mask: Binary missing value mask
+            - impute_targets: Ground-truth values for imputation
+            - dirty_label: Observed (potentially noisy) label
+            - clean_label: Ground-truth label
+            - noise_label: Binary indicating if label is noisy
+            - quality_score: Data quality score
         """
-        # Get row data
-        row = self.data.iloc[idx]
-        
-        # Convert row to text representation
-        text = self._row_to_text(row)
-        
-        # Tokenize
-        tokens = self.tokenizer(text, max_length=self.max_length)
-        
-        # Prepare output
-        output = {
-            'input_ids': torch.tensor(tokens['input_ids'], dtype=torch.long),
-            'attention_mask': torch.tensor(tokens['attention_mask'], dtype=torch.long),
-        }
-        
-        # Add task labels
-        for task_name, labels in self.task_labels.items():
-            label_value = labels.iloc[idx]
-            
-            # Handle different label types
-            if isinstance(label_value, (int, np.integer)):
-                output[f'{task_name}_labels'] = torch.tensor(label_value, dtype=torch.long)
-            elif isinstance(label_value, (float, np.floating)):
-                output[f'{task_name}_labels'] = torch.tensor(label_value, dtype=torch.float)
-            else:
-                # Try to convert to numeric
-                try:
-                    output[f'{task_name}_labels'] = torch.tensor(float(label_value), dtype=torch.float)
-                except (ValueError, TypeError):
-                    output[f'{task_name}_labels'] = torch.tensor(0, dtype=torch.long)
-        
-        return output
-    
-    def _row_to_text(self, row: pd.Series) -> str:
-        """
-        Convert a dataframe row to text representation.
-        
-        Args:
-            row: Pandas series representing a row
-            
-        Returns:
-            Text representation of the row
-        """
-        # Simple approach: concatenate column names and values
-        parts = []
-        for col, val in row.items():
-            if pd.notna(val):
-                parts.append(f"{col}: {val}")
-            else:
-                parts.append(f"{col}: [MISSING]")
-        
-        return " | ".join(parts)
-    
-    def _default_tokenizer(self, text: str, max_length: int) -> Dict[str, List[int]]:
-        """
-        Default tokenizer (character-level).
-        
-        Args:
-            text: Input text
-            max_length: Maximum sequence length
-            
-        Returns:
-            Dictionary with input_ids and attention_mask
-        """
-        # Simple character-level tokenization
-        char_ids = [ord(c) % 256 for c in text[:max_length]]
-        
-        # Pad or truncate
-        if len(char_ids) < max_length:
-            attention_mask = [1] * len(char_ids) + [0] * (max_length - len(char_ids))
-            char_ids = char_ids + [0] * (max_length - len(char_ids))
-        else:
-            attention_mask = [1] * max_length
-            char_ids = char_ids[:max_length]
-        
         return {
-            'input_ids': char_ids,
-            'attention_mask': attention_mask,
+            'dirty_features': torch.tensor(self.dirty[idx], dtype=torch.float32),
+            'z_scores': torch.tensor(self.z_scores[idx], dtype=torch.float32),
+            'error_mask': torch.tensor(self.error_mask[idx], dtype=torch.long),
+            'clean_features': torch.tensor(self.clean[idx], dtype=torch.float32),
+            'repair_mask': torch.tensor(self.error_mask[idx], dtype=torch.float32),
+            'missing_mask': torch.tensor(self.missing_mask[idx], dtype=torch.float32),
+            'impute_targets': torch.tensor(self.clean[idx], dtype=torch.float32),
+            'dirty_label': torch.tensor(self.labels[idx], dtype=torch.long),
+            'clean_label': torch.tensor(self.clean_labels[idx], dtype=torch.long),
+            'noise_label': torch.tensor(int(self.noise_mask[idx]), dtype=torch.long),
+            'quality_score': torch.tensor(self.quality_scores[idx], dtype=torch.float32),
         }
     
-    @staticmethod
-    def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    def get_statistics(self) -> Dict[str, float]:
         """
-        Collate function for DataLoader.
+        Get dataset statistics.
         
-        Args:
-            batch: List of samples
+        Returns
+        -------
+        Dict[str, float]
+            Dictionary containing:
+            - n_samples: Number of samples
+            - n_features: Number of features
+            - error_rate: Overall error rate
+            - missing_rate: Overall missing rate
+            - noise_rate: Label noise rate
+        """
+        return {
+            'n_samples': self.n_samples,
+            'n_features': self.n_features,
+            'error_rate': float(self.error_mask.mean()),
+            'missing_rate': float(self.missing_mask.mean()),
+            'noise_rate': float(self.noise_mask.mean()),
+        }
+    
+    @classmethod
+    def from_dataframe(
+        cls,
+        dirty_df,
+        clean_df=None,
+        label_column: Optional[str] = None,
+        **kwargs
+    ) -> 'MultiTaskDataset':
+        """
+        Create dataset from pandas DataFrames.
+        
+        Parameters
+        ----------
+        dirty_df : pd.DataFrame
+            Dirty/corrupted data
+        clean_df : pd.DataFrame, optional
+            Clean/ground-truth data
+        label_column : str, optional
+            Column name for labels
+        **kwargs
+            Additional arguments passed to __init__
             
-        Returns:
-            Batched tensors
+        Returns
+        -------
+        MultiTaskDataset
         """
-        # Get all keys from first sample
-        keys = batch[0].keys()
+        import pandas as pd
+        from sklearn.preprocessing import LabelEncoder
         
-        # Stack tensors for each key
-        collated = {}
-        for key in keys:
-            collated[key] = torch.stack([sample[key] for sample in batch])
+        # Extract labels if specified
+        labels = None
+        clean_labels = None
         
-        return collated
+        if label_column is not None:
+            if label_column in dirty_df.columns:
+                le = LabelEncoder()
+                labels = le.fit_transform(dirty_df[label_column])
+                dirty_df = dirty_df.drop(columns=[label_column])
+                
+                if clean_df is not None and label_column in clean_df.columns:
+                    clean_labels = le.transform(clean_df[label_column])
+                    clean_df = clean_df.drop(columns=[label_column])
+        
+        # Encode features
+        n_samples = len(dirty_df)
+        n_features = len(dirty_df.columns)
+        
+        dirty_encoded = np.zeros((n_samples, n_features), dtype=np.float32)
+        clean_encoded = np.zeros((n_samples, n_features), dtype=np.float32) if clean_df is not None else None
+        error_mask = np.zeros((n_samples, n_features), dtype=np.float32) if clean_df is not None else None
+        
+        for j, col in enumerate(dirty_df.columns):
+            # Try numeric encoding first
+            dirty_numeric = pd.to_numeric(dirty_df[col], errors='coerce')
+            
+            if dirty_numeric.notna().mean() > 0.5:
+                # Numeric column
+                mean = dirty_numeric.mean()
+                std = dirty_numeric.std() + 1e-8
+                dirty_encoded[:, j] = ((dirty_numeric.fillna(mean) - mean) / std).values
+                
+                if clean_df is not None:
+                    clean_numeric = pd.to_numeric(clean_df[col], errors='coerce')
+                    clean_encoded[:, j] = ((clean_numeric.fillna(mean) - mean) / std).values
+            else:
+                # Categorical column
+                le = LabelEncoder()
+                all_vals = dirty_df[col].fillna('__NA__').astype(str)
+                if clean_df is not None:
+                    all_vals = pd.concat([all_vals, clean_df[col].fillna('__NA__').astype(str)])
+                le.fit(all_vals)
+                
+                dirty_encoded[:, j] = le.transform(dirty_df[col].fillna('__NA__').astype(str))
+                max_val = max(dirty_encoded[:, j].max(), 1)
+                dirty_encoded[:, j] /= max_val
+                
+                if clean_df is not None:
+                    clean_encoded[:, j] = le.transform(clean_df[col].fillna('__NA__').astype(str)) / max_val
+            
+            # Compute error mask
+            if clean_df is not None:
+                d = dirty_df[col].fillna('').astype(str).str.strip().str.lower()
+                c = clean_df[col].fillna('').astype(str).str.strip().str.lower()
+                error_mask[:, j] = (d != c).values.astype(np.float32)
+        
+        return cls(
+            dirty_features=dirty_encoded,
+            clean_features=clean_encoded,
+            error_mask=error_mask,
+            labels=labels,
+            clean_labels=clean_labels,
+            **kwargs
+        )

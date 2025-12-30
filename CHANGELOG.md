@@ -9,9 +9,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planned
 - Pre-trained model weights
-- Additional data quality tasks
-- Performance optimizations
-- Documentation improvements
+- Additional data quality tasks (time-series, images)
+- Integration with PyTorch Lightning
+- Performance optimizations for large datasets
+- Automated hyperparameter tuning
+
+## [0.2.0] - 2025-12-30
+
+### 🎉 Major Rewrite - Complete Architecture Redesign
+
+This is a **major rewrite** of UNIDQ, transitioning from experimental code to a production-ready library specifically designed for **tabular data quality**.
+
+### Added
+- **New Architecture:** Unified transformer model (495K parameters) for all 6 tasks
+- **Config System:** `UNIDQConfig` for centralized configuration management
+- **Evaluation Module:** Comprehensive evaluation with `evaluate_all_tasks()` and `evaluate_task()`
+- **Cross-Validation:** Built-in k-fold cross-validation support in `UNIDQTrainer`
+- **Examples:** Complete working examples (`quickstart.py`, `cross_validation.py`)
+- **Comprehensive Tests:** Full test suite in `test_unidq.py`
+- **Better API:** Cleaner, more intuitive API matching PyTorch conventions
+
+### Changed
+- **BREAKING:** Complete API redesign for tabular data (replaces NLP-based approach)
+- **Model Architecture:** From generic NLP model to specialized tabular transformer
+- **Input Format:** Now uses numpy arrays for tabular features (removed tokenizer/vocab)
+- **Dataset:** `MultiTaskDataset` specifically for tabular multi-task learning
+- **Trainer:** Enhanced `UNIDQTrainer` with cross-validation and better progress tracking
+
+### Removed
+- **BREAKING:** Removed NLP-specific components (tokenizer, vocabulary, max_seq_length)
+- Removed `utils.py` (functionality moved to appropriate modules)
+- Removed pretrained models (will be re-added in future version)
+
+### Fixed
+- Architecture now correctly handles tabular data with cell-level and sample-level predictions
+- Proper multi-task loss balancing
+- Improved training stability and convergence
+
+### Migration Guide
+
+**Old API (0.1.x):**
+```python
+# ❌ No longer works
+model = UNIDQ(max_seq_length=512, vocab_size=1000)
+```
+
+**New API (0.2.0):**
+```python
+# ✅ New approach
+from unidq import UNIDQ, MultiTaskDataset, UNIDQTrainer
+
+dataset = MultiTaskDataset(
+    dirty_features=X_dirty,
+    clean_features=X_clean,
+    error_mask=errors,
+    labels=y
+)
+
+model = UNIDQ(n_features=X.shape[1])
+trainer = UNIDQTrainer(model)
+trainer.fit(dataset, epochs=50)
+```
+
+### Performance
+- Error Detection: F1 = 0.894, ROC-AUC = 0.912
+- Data Repair: R² = 0.539
+- Imputation: R² = 0.941
+- Label Noise: F1 = 0.856
+- Classification: Accuracy = 0.922
+- Valuation: Correlation = 0.336
+
+## [0.1.5] - 2024-12-29
+
+### Fixed
+- Documentation links to GitHub repository
+- Badge URLs in README
 
 ## [0.1.4] - 2024-12-29
 

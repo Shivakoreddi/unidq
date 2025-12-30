@@ -1,371 +1,254 @@
 # UNIDQ: Unified Data Quality
 
-[![PyPI version](https://badge.fury.io/py/unidq.svg)](https://pypi.org/project/unidq/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI version](https://badge.fury.io/py/unidq.svg)](https://badge.fury.io/py/unidq)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Downloads](https://pepy.tech/badge/unidq)](https://pepy.tech/project/unidq)
-[![GitHub Repo](https://img.shields.io/badge/GitHub-Shivakoreddi%2Funidq-blue?logo=github)](https://github.com/Shivakoreddi/unidq)
-[![GitHub Stars](https://img.shields.io/github/stars/Shivakoreddi/unidq?style=social)](https://github.com/Shivakoreddi/unidq/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Paper](https://img.shields.io/badge/Paper-VLDB%202026-green.svg)](https://vldb.org/)
 
-**A unified transformer architecture for multi-task data quality assessment.**
+**UNIDQ** is a unified transformer-based architecture for multi-task tabular data quality. A single model handles 6 data quality tasks simultaneously, replacing the need for multiple specialized tools.
 
----
+## 🎯 Six Tasks, One Model
 
-## What is UNIDQ?
+| Task | Description | Metric |
+|------|-------------|--------|
+| **Error Detection** | Identify erroneous cells | F1: 0.894 |
+| **Data Repair** | Correct erroneous values | R²: 0.539 |
+| **Imputation** | Fill missing values | R²: 0.941 |
+| **Label Noise Detection** | Identify mislabeled samples | F1: 0.856 |
+| **Label Classification** | Classify samples | Acc: 0.922 |
+| **Data Valuation** | Score data quality | ρ: 0.336 |
 
-UNIDQ (Unified Data Quality) is a deep learning library that handles multiple data quality tasks with a single model. Rather than using separate tools for each task, UNIDQ provides one unified solution for all your data quality needs.
-
-### The Problem
-
-Real-world data is messy. You often deal with:
-- Wrong or corrupted values
-- Missing data
-- Mislabeled samples
-- Low-quality records
-
-Fixing these issues typically requires multiple tools, each with different configurations and APIs.
-
-### The Solution
-
-UNIDQ handles **6 data quality tasks** with a single model:
-
-| Task | What it does |
-|------|--------------|
-| **Error Detection** | Find wrong/dirty values in your data |
-| **Data Repair** | Fix the detected errors |
-| **Imputation** | Fill in missing values |
-| **Label Noise Detection** | Find mislabeled samples |
-| **Label Classification** | Predict labels for your data |
-| **Data Valuation** | Score each sample's quality |
-
-### Key Benefits
-
-- 🎯 **Unified** - One model handles all six tasks
-- ⚡ **Fast** - Processes 200K records in under 20 minutes
-- 🔧 **Simple** - Clean, intuitive API
-- 📈 **Accurate** - State-of-the-art performance on benchmark datasets
-- 🪶 **Lightweight** - Efficient transformer architecture
-
----
-
-## Installation
+## 📦 Installation
 
 ```bash
 pip install unidq
 ```
 
-**Requirements:** Python 3.8+, PyTorch 1.9+
-
----
-
-## Quick Start
-
-```python
-from unidq import UNIDQ
-
-# Initialize model
-model = UNIDQ(n_features=10)
-
-# Detect errors in your data
-errors = model.detect_errors(X)
-
-# Impute missing values
-X_filled = model.impute(X)
-
-# Find mislabeled samples
-noisy = model.detect_label_noise(X, y)
-```
-
----
-
-## Usage Guide
-
-### 1. Error Detection
-
-Find erroneous values in your dataset.
-
-```python
-from unidq import UNIDQ
-
-model = UNIDQ(n_features=X.shape[1])
-model.fit(train_data)
-
-# Detect errors
-results = model.detect_errors(X_dirty)
-
-print(f"Found {results['count']} errors")
-print(f"Error rate: {results['error_rate']:.2%}")
-```
-
-**What you get:**
-- `predictions`: Binary mask (1 = error, 0 = clean)
-- `probabilities`: Confidence scores for each cell
-- `count`: Total number of errors found
-- `error_rate`: Percentage of erroneous cells
-
----
-
-### 2. Data Repair
-
-Automatically fix detected errors.
-
-```python
-# Repair errors
-X_repaired = model.repair(X_dirty)
-
-# Or detect and repair in one step
-X_clean, report = model.detect_and_repair(X_dirty)
-
-print(f"Repaired {report['repairs_made']} values")
-```
-
-**What you get:**
-- Cleaned data with errors corrected
-- Report showing what was changed
-
----
-
-### 3. Missing Value Imputation
-
-Fill in missing values intelligently.
-
-```python
-import numpy as np
-
-# Data with missing values
-X_missing = X.copy()
-X_missing[0, 2] = np.nan
-X_missing[5, 1] = np.nan
-
-# Impute
-X_filled = model.impute(X_missing)
-
-print("Missing values filled!")
-```
-
-**What you get:**
-- Complete data with no missing values
-- Imputation uses learned patterns from your data
-
----
-
-### 4. Label Noise Detection
-
-Find samples that might be mislabeled.
-
-```python
-# Find noisy labels
-results = model.detect_label_noise(X, y)
-
-# Get suspicious samples
-suspicious_indices = results['flagged_indices']
-print(f"Found {len(suspicious_indices)} potentially mislabeled samples")
-
-# Review them
-for idx in suspicious_indices[:5]:
-    print(f"Sample {idx}: label={y[idx]}, suggested={results['suggested_labels'][idx]}")
-```
-
-**What you get:**
-- `noise_scores`: Probability each label is wrong
-- `flagged_indices`: Samples likely mislabeled
-- `suggested_labels`: What the correct label might be
-
----
-
-### 5. Data Valuation
-
-Score how useful each sample is for training.
-
-```python
-# Get quality scores
-scores = model.valuate(X, y)
-
-# Filter to high-quality samples
-high_quality = scores > 0.7
-X_clean = X[high_quality]
-y_clean = y[high_quality]
-
-print(f"Kept {high_quality.sum()}/{len(X)} samples")
-```
-
-**What you get:**
-- Score between 0 and 1 for each sample
-- Higher = better quality, more useful for training
-
----
-
-### 6. Full Data Quality Assessment
-
-Run everything at once.
-
-```python
-# Complete assessment
-report = model.assess_quality(X, y)
-
-print("=== Data Quality Report ===")
-print(f"Errors: {report['errors']['count']}")
-print(f"Missing: {report['missing']['count']}")
-print(f"Noisy labels: {report['noise']['count']}")
-print(f"Average quality: {report['quality']['mean']:.2f}")
-
-# Get cleaned data
-X_clean = report['cleaned_data']
-y_clean = report['cleaned_labels']
-```
-
----
-
-## Training Your Own Model
-
-### Basic Training
+## 🚀 Quick Start
 
 ```python
 from unidq import UNIDQ, MultiTaskDataset, UNIDQTrainer
 
-# Prepare dataset
+# 1. Prepare your data
+dataset = MultiTaskDataset(
+    dirty_features=X_dirty,      # Corrupted data
+    clean_features=X_clean,      # Ground truth (optional, for training)
+    error_mask=errors,           # Binary error mask (optional)
+    labels=y_noisy,              # Observed labels
+    clean_labels=y_clean,        # True labels (optional)
+    noise_mask=noise_mask,       # Label noise mask (optional)
+)
+
+# 2. Create and train model
+model = UNIDQ(n_features=X_dirty.shape[1])
+trainer = UNIDQTrainer(model)
+trainer.fit(dataset, epochs=50)
+
+# 3. Make predictions
+results = model.predict(X_new)
+
+print(results['error_mask'])      # Detected errors
+print(results['repaired'])        # Repaired values
+print(results['noise_mask'])      # Detected noisy labels
+print(results['quality_scores'])  # Data quality scores
+```
+
+## 📊 Cross-Validation Example
+
+```python
+from unidq import UNIDQ, MultiTaskDataset
+from unidq.trainer import cross_validate
+
+# Load your dataset
 dataset = MultiTaskDataset(
     dirty_features=X_dirty,
     clean_features=X_clean,
     error_mask=errors,
-    labels=y
+    labels=y_noisy,
+    clean_labels=y_clean,
+    noise_mask=noise_mask,
 )
 
-# Create and train model
-model = UNIDQ(n_features=X.shape[1])
-trainer = UNIDQTrainer(model)
-trainer.fit(dataset, epochs=50)
+# Run 5-fold cross-validation
+results = cross_validate(
+    model_class=UNIDQ,
+    dataset=dataset,
+    n_features=X_dirty.shape[1],
+    n_folds=5,
+    epochs=50,
+)
 
-# Save for later
-model.save('my_model.pt')
+# Results contain mean ± std for all metrics
+print(f"Error F1: {results['error_f1']['mean']:.3f} ± {results['error_f1']['std']:.3f}")
+print(f"Noise F1: {results['noise_f1']['mean']:.3f} ± {results['noise_f1']['std']:.3f}")
 ```
 
-### Loading a Saved Model
+## 🔧 Model Architecture
+
+UNIDQ uses a shared transformer encoder with task-specific heads:
+
+```
+Input Features → [Value Embed + Z-Score Embed + Pos Embed]
+                              ↓
+                    Transformer Encoder (3 layers)
+                              ↓
+              ┌───────────────┼───────────────┐
+              ↓               ↓               ↓
+        Cell Outputs      CLS Token      CLS Token
+              ↓               ↓               ↓
+    ┌─────────┼─────────┐     │     ┌─────────┼─────────┐
+    ↓         ↓         ↓     ↓     ↓         ↓         ↓
+  Error    Repair    Impute Label  Noise   Value
+  Head     Head      Head   Head   Head    Head
+```
+
+**Model Size:** ~495K parameters (default configuration)
+
+## 📈 Configuration
 
 ```python
-model = UNIDQ(n_features=10)
-model.load('my_model.pt')
+from unidq import UNIDQ, UNIDQConfig
 
-# Ready to use
-results = model.detect_errors(new_data)
+# Custom configuration
+config = UNIDQConfig(
+    d_model=256,      # Hidden dimension
+    n_heads=8,        # Attention heads
+    n_layers=6,       # Transformer layers
+    dropout=0.1,
+)
+
+model = UNIDQ(n_features=14, config=config)
+print(f"Parameters: {model.get_num_parameters():,}")
 ```
 
----
-
-## Working with DataFrames
-
-UNIDQ works seamlessly with Pandas.
+### Preset Configurations
 
 ```python
-import pandas as pd
-from unidq import UNIDQ
+from unidq.config import UNIDQ_SMALL, UNIDQ_BASE, UNIDQ_LARGE
 
-# Load your data
-df = pd.read_csv('my_data.csv')
-
-# Create model from DataFrame
-model = UNIDQ.from_dataframe(df)
-
-# Detect errors
-errors = model.detect_errors(df)
-
-# Get cleaned DataFrame
-df_clean = model.clean(df)
-df_clean.to_csv('cleaned_data.csv', index=False)
+# UNIDQ_SMALL: 64d, 2 heads, 2 layers (~125K params)
+# UNIDQ_BASE:  128d, 4 heads, 3 layers (~495K params) [default]
+# UNIDQ_LARGE: 256d, 8 heads, 6 layers (~2M params)
 ```
 
----
+## 📋 API Reference
 
-## Configuration Options
+### MultiTaskDataset
 
-### Model Settings
+```python
+dataset = MultiTaskDataset(
+    dirty_features,    # np.ndarray (n_samples, n_features) - Required
+    clean_features,    # np.ndarray - Ground truth features
+    error_mask,        # np.ndarray - Binary error indicators
+    missing_mask,      # np.ndarray - Binary missing indicators
+    labels,            # np.ndarray - Observed labels
+    clean_labels,      # np.ndarray - True labels
+    noise_mask,        # np.ndarray - Binary noise indicators
+)
+```
+
+### UNIDQ Model
 
 ```python
 model = UNIDQ(
-    n_features=20,        # Number of features in your data
-    d_model=128,          # Model dimension (default: 128)
-    n_layers=3,           # Number of transformer layers (default: 3)
-    dropout=0.1           # Dropout rate (default: 0.1)
+    n_features,        # int - Number of input features
+    d_model=128,       # int - Hidden dimension
+    n_heads=4,         # int - Attention heads
+    n_layers=3,        # int - Transformer layers
+    dropout=0.1,       # float - Dropout rate
 )
+
+# Forward pass
+outputs = model(features, z_scores, labels)
+
+# Prediction
+results = model.predict(X_new, threshold=0.5)
 ```
 
-### Training Settings
+### UNIDQTrainer
 
 ```python
-trainer = UNIDQTrainer(
-    model,
-    batch_size=64,        # Batch size (default: 64)
-    learning_rate=1e-3,   # Learning rate (default: 1e-3)
-    early_stopping=10     # Stop if no improvement for N epochs
+trainer = UNIDQTrainer(model, device='cuda')
+
+trainer.fit(
+    train_dataset,
+    val_dataset=None,
+    epochs=50,
+    batch_size=64,
+    learning_rate=5e-4,
+    patience=10,
 )
+
+metrics = trainer.evaluate(test_dataset)
 ```
 
----
-
-## Example: Cleaning Customer Data
+## 🔬 Evaluation Metrics
 
 ```python
-import pandas as pd
-from unidq import UNIDQ
+from unidq import evaluate_all_tasks
+from unidq.evaluation import print_evaluation_report
 
-# Load messy customer data
-df = pd.read_csv('customers.csv')
-print(f"Loaded {len(df)} records")
-
-# Initialize UNIDQ
-model = UNIDQ.from_dataframe(df)
-
-# Run full assessment
-report = model.assess_quality(df)
-
-# Print findings
-print("\n📊 Data Quality Report")
-print(f"  • Errors found: {report['errors']['count']}")
-print(f"  • Missing values: {report['missing']['count']}")
-print(f"  • Suspicious labels: {report['noise']['count']}")
-print(f"  • Overall quality: {report['quality']['mean']:.0%}")
-
-# Save cleaned data
-df_clean = report['cleaned_data']
-df_clean.to_csv('customers_clean.csv', index=False)
-print(f"\n✅ Saved cleaned data!")
+metrics = evaluate_all_tasks(model, dataloader, device)
+print_evaluation_report(metrics)
 ```
 
----
+Output:
+```
+============================================================
+UNIDQ Evaluation Report
+============================================================
 
-## Performance
+📌 ERROR DETECTION
+   F1 Score:    0.8940
+   ROC AUC:     0.9120
+   Precision:   0.8650
+   Recall:      0.9250
 
-### Scalability
+🔧 DATA REPAIR
+   R² Score:    0.5390
+   MAE:         0.1230
 
-UNIDQ efficiently handles datasets of various sizes:
+📥 IMPUTATION
+   R² Score:    0.9410
+   MAE:         0.0540
 
-| Dataset Size | Training Time |
-|--------------|---------------|
-| 10,000 | ~2 min |
-| 50,000 | ~11 min |
-| 100,000 | ~9 min |
-| 200,000 | ~18 min |
+🏷️ LABEL NOISE DETECTION
+   F1 Score:    0.8560
+   ROC AUC:     0.8890
 
-### Accuracy
+🎯 LABEL CLASSIFICATION
+   Accuracy:    0.9220
+   F1 Score:    0.9150
 
-UNIDQ achieves strong results across all tasks:
+💰 DATA VALUATION
+   Correlation: 0.3360
+============================================================
+```
 
-| Task | Performance |
-|------|-------------|
-| Error Detection | F1 = 0.89 |
-| Imputation | R² = 0.94 |
-| Label Noise Detection | F1 = 0.86 |
-| Label Classification | Accuracy = 0.98 |
+## 📄 Citation
 
----
+If you use UNIDQ in your research, please cite:
 
-## Release Methodology
+```bibtex
+@inproceedings{koreddi2026unidq,
+  title={UNIDQ: A Unified Transformer for Multi-Task Data Quality},
+  author={Koreddi, Shiva},
+  booktitle={Proceedings of the VLDB Endowment},
+  year={2026}
+}
+```
+
+## 📜 License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## 📋 Release Methodology
 
 UNIDQ follows [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH):
 
 - **MAJOR** (e.g., 1.0.0 → 2.0.0): Breaking API changes
 - **MINOR** (e.g., 0.1.0 → 0.2.0): New features, backwards compatible
-- **PATCH** (e.g., 0.1.5 → 0.1.6): Bug fixes, backwards compatible
+- **PATCH** (e.g., 0.2.0 → 0.2.1): Bug fixes, backwards compatible
 
 ### Release Schedule
 
@@ -392,63 +275,23 @@ pip install --upgrade unidq
 python -c "import unidq; print(unidq.__version__)"
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for detailed release notes and [CONTRIBUTING.md](CONTRIBUTING.md) for the complete release process.
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
----
+## 🤝 Contributing
 
-## FAQ
+Contributions welcome! Please read our [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md).
 
-**Q: Do I need labeled data to use UNIDQ?**
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
 
-For error detection and imputation, you can use UNIDQ in unsupervised mode. For best results on all tasks, providing some labeled examples helps.
+For governance details, see [GOVERNANCE.md](GOVERNANCE.md).
 
-**Q: How much data do I need?**
+## 📧 Contact
 
-UNIDQ works with datasets as small as 1,000 records. Performance improves with more data.
-
-**Q: Can I use UNIDQ with categorical data?**
-
-Yes! UNIDQ automatically handles both numerical and categorical features.
-
-**Q: How do I choose which tasks to run?**
-
-Use `assess_quality()` to run everything, or call individual methods like `detect_errors()` or `impute()` for specific tasks.
-
-**Q: Can I use a pre-trained model?**
-
-Yes, you can save and load models using `model.save()` and `model.load()`.
-
----
-
-## Citation
-
-If you use UNIDQ in your research:
-
-```bibtex
-@inproceedings{unidq2026,
-  title={UNIDQ: A Unified Transformer Architecture for Multi-Task Data Quality},
-  author={Koreddi, Shiva and Sowrupilli, Sravani},
-  booktitle={Proceedings of the VLDB Endowment},
-  year={2026}
-}
-```
-
----
-
-## Links
-
-- **PyPI**: [pypi.org/project/unidq](https://pypi.org/project/unidq/)
-- **GitHub**: [github.com/Shivakoreddi/unidq](https://github.com/Shivakoreddi/unidq)
-- **Issues**: [Report bugs or request features](https://github.com/Shivakoreddi/unidq/issues)
-
----
-
-## License
-
-MIT License - free for personal and commercial use.
-
----
-
-<p align="center">
-  <b>One model. Six tasks. Clean data.</b>
-</p>
+- **Authors:** Shiva Koreddi, Sravani Sowrupilli
+- **GitHub:** [@Shivakoreddi](https://github.com/Shivakoreddi)
+- **Issues:** [GitHub Issues](https://github.com/Shivakoreddi/unidq/issues)
+- **Email:** shivacse14@gmail.com, sravani.sowrupilli@gmail.com

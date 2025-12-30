@@ -1,185 +1,139 @@
+#!/usr/bin/env python3
 """
-UNIDQ Quickstart Example
+UNIDQ Quick Start Example
+=========================
 
-This script demonstrates basic usage of the UNIDQ package for multi-task data quality.
+This example shows how to use UNIDQ for multi-task data quality.
 """
 
-import pandas as pd
 import numpy as np
+from unidq import UNIDQ, MultiTaskDataset, UNIDQTrainer
+from unidq.evaluation import print_evaluation_report
+
+# =============================================================================
+# 1. Generate Sample Data
+# =============================================================================
+
+np.random.seed(42)
+n_samples = 1000
+n_features = 10
+
+# Clean data
+X_clean = np.random.randn(n_samples, n_features).astype(np.float32)
+y_clean = (X_clean[:, 0] + X_clean[:, 1] > 0).astype(np.int64)
+
+# Inject errors (10% error rate)
+X_dirty = X_clean.copy()
+error_mask = np.zeros((n_samples, n_features), dtype=np.float32)
+n_errors = int(n_samples * n_features * 0.1)
+error_idx = np.random.choice(n_samples * n_features, n_errors, replace=False)
+for idx in error_idx:
+    row, col = idx // n_features, idx % n_features
+    X_dirty[row, col] += np.random.randn() * 2  # Add noise
+    error_mask[row, col] = 1.0
+
+# Inject label noise (10% noise rate)
+y_noisy = y_clean.copy()
+noise_mask = np.zeros(n_samples, dtype=np.float32)
+n_noisy = int(n_samples * 0.1)
+noisy_idx = np.random.choice(n_samples, n_noisy, replace=False)
+y_noisy[noisy_idx] = 1 - y_noisy[noisy_idx]  # Flip labels
+noise_mask[noisy_idx] = 1.0
+
+# Missing values mask (5% missing)
+missing_mask = np.zeros((n_samples, n_features), dtype=np.float32)
+n_missing = int(n_samples * n_features * 0.05)
+missing_idx = np.random.choice(n_samples * n_features, n_missing, replace=False)
+for idx in missing_idx:
+    row, col = idx // n_features, idx % n_features
+    if error_mask[row, col] == 0:  # Don't mark errors as missing
+        missing_mask[row, col] = 1.0
+
+print(f"Data shape: {X_dirty.shape}")
+print(f"Error rate: {error_mask.mean()*100:.1f}%")
+print(f"Noise rate: {noise_mask.mean()*100:.1f}%")
+print(f"Missing rate: {missing_mask.mean()*100:.1f}%")
+
+# =============================================================================
+# 2. Create Dataset
+# =============================================================================
+
+dataset = MultiTaskDataset(
+    dirty_features=X_dirty,
+    clean_features=X_clean,
+    error_mask=error_mask,
+    missing_mask=missing_mask,
+    labels=y_noisy,
+    clean_labels=y_clean,
+    noise_mask=noise_mask,
+)
+
+# Split into train/val
+train_size = int(0.8 * len(dataset))
+train_dataset = torch.utils.data.Subset(dataset, range(train_size))
+val_dataset = torch.utils.data.Subset(dataset, range(train_size, len(dataset)))
+
+print(f"\nTrain samples: {len(train_dataset)}")
+print(f"Val samples: {len(val_dataset)}")
+
+# =============================================================================
+# 3. Train Model
+# =============================================================================
+
 import torch
-from torch.utils.data import DataLoader
 
-from unidq import UNIDQ, UNIDQConfig, MultiTaskDataset, UNIDQTrainer
-from unidq.utils import set_seed, get_device, create_synthetic_errors
-from unidq.evaluation import evaluate_all_tasks
+model = UNIDQ(n_features=n_features)
+print(f"\nModel parameters: {model.get_num_parameters():,}")
 
+trainer = UNIDQTrainer(model)
+history = trainer.fit(
+    train_dataset,
+    val_dataset,
+    epochs=30,
+    batch_size=64,
+    verbose=True,
+)
 
-def main():
-    """Run quickstart example."""
-    
-    # Set random seed for reproducibility
-    set_seed(42)
-    
-    print("=" * 60)
-    print("UNIDQ Quickstart Example")
-    print("=" * 60)
-    
-    # Step 1: Create sample data
-    print("\n1. Creating sample dataset...")
-    df = pd.DataFrame({
-        'name': ['Alice', 'Bob', 'Charlie', 'David', 'Eve', 'Frank', 'Grace', 'Henry'],
-        'age': [25, 30, 35, 40, 28, 33, 29, 45],
-        'city': ['NYC', 'LA', 'Chicago', 'Houston', 'NYC', 'LA', 'Chicago', 'Boston'],
-        'salary': [50000, 60000, 70000, 80000, 55000, 65000, 58000, 90000],
-        'department': ['IT', 'Sales', 'IT', 'HR', 'Sales', 'IT', 'HR', 'Sales'],
-    })
-    
-    print(f"   Created dataframe with {len(df)} rows and {len(df.columns)} columns")
-    print(f"   Columns: {list(df.columns)}")
-    
-    # Step 2: Create synthetic labels for demonstration
-    print("\n2. Creating synthetic task labels...")
-    np.random.seed(42)
-    
-    task_labels = {
-        'error_detection': pd.Series(np.random.randint(0, 2, len(df))),
-        'duplicate_detection': pd.Series(np.random.randint(0, 2, len(df))),
-        'outlier_detection': pd.Series(np.random.randint(0, 2, len(df))),
-    }
-    
-    print(f"   Created labels for {len(task_labels)} tasks")
-    
-    # Step 3: Create dataset and dataloaders
-    print("\n3. Creating datasets and dataloaders...")
-    
-    dataset = MultiTaskDataset(
-        data=df,
-        task_labels=task_labels,
-        max_length=128,
-    )
-    
-    # Split into train/val
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, [train_size, val_size]
-    )
-    
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=2,
-        shuffle=True,
-        collate_fn=MultiTaskDataset.collate_fn,
-    )
-    
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=2,
-        collate_fn=MultiTaskDataset.collate_fn,
-    )
-    
-    print(f"   Train samples: {len(train_dataset)}")
-    print(f"   Val samples: {len(val_dataset)}")
-    
-    # Step 4: Initialize model
-    print("\n4. Initializing UNIDQ model...")
-    
-    config = UNIDQConfig(
-        d_model=128,
-        n_heads=4,
-        n_layers=2,
-        d_ff=512,
-        dropout=0.1,
-        max_seq_length=128,
-        vocab_size=256,  # Character-level
-    )
-    
-    model = UNIDQ(config)
-    device = get_device()
-    
-    print(f"   Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
-    print(f"   Device: {device}")
-    
-    # Step 5: Create trainer
-    print("\n5. Setting up trainer...")
-    
-    trainer = UNIDQTrainer(
-        model=model,
-        train_dataloader=train_loader,
-        val_dataloader=val_loader,
-        device=device,
-    )
-    
-    print("   Trainer initialized")
-    
-    # Step 6: Train the model
-    print("\n6. Training model...")
-    print("   Training for 2 epochs (demo)...")
-    
-    history = trainer.train(
-        num_epochs=2,
-        save_dir='./checkpoints',
-        save_best=True,
-    )
-    
-    print("\n   Training complete!")
-    print(f"   Final train loss: {history['train_loss'][-1]:.4f}")
-    if history['val_loss']:
-        print(f"   Final val loss: {history['val_loss'][-1]:.4f}")
-    
-    # Step 7: Evaluate model
-    print("\n7. Evaluating model...")
-    
-    metrics = evaluate_all_tasks(
-        model=model,
-        dataloader=val_loader,
-        device=device,
-    )
-    
-    print("\n   Evaluation metrics:")
-    for metric_name, value in metrics.items():
-        print(f"   {metric_name}: {value:.4f}")
-    
-    # Step 8: Make predictions
-    print("\n8. Making predictions on sample data...")
-    
-    model.eval()
-    with torch.no_grad():
-        sample_batch = next(iter(val_loader))
-        sample_batch = {k: v.to(device) for k, v in sample_batch.items()}
-        
-        outputs = model(
-            sample_batch['input_ids'],
-            sample_batch['attention_mask']
-        )
-        
-        print("\n   Prediction outputs:")
-        for task_name, task_output in outputs.items():
-            print(f"   {task_name}: shape {task_output.shape}")
-    
-    # Step 9: Save model
-    print("\n9. Saving model...")
-    
-    model.save_pretrained('./saved_model')
-    print("   Model saved to './saved_model'")
-    
-    # Step 10: Load model
-    print("\n10. Loading model...")
-    
-    loaded_model = UNIDQ.from_pretrained('./saved_model')
-    print("   Model loaded successfully!")
-    
-    print("\n" + "=" * 60)
-    print("Quickstart complete! 🎉")
-    print("=" * 60)
-    print("\nNext steps:")
-    print("- Check out the tutorial notebook in examples/notebooks/")
-    print("- Customize the model configuration for your use case")
-    print("- Train on your own data quality datasets")
-    print("- Explore individual task evaluation functions")
-    print("=" * 60)
+# =============================================================================
+# 4. Evaluate
+# =============================================================================
 
+print("\n" + "="*60)
+print("Final Evaluation on Validation Set")
+print("="*60)
 
-if __name__ == '__main__':
-    main()
+metrics = trainer.evaluate(val_dataset)
+print_evaluation_report(metrics)
+
+# =============================================================================
+# 5. Make Predictions
+# =============================================================================
+
+# Predict on new data
+test_data = X_dirty[:10]
+predictions = model.predict(test_data)
+
+print("\n" + "="*60)
+print("Sample Predictions (first 10 samples)")
+print("="*60)
+
+print("\nDetected Errors (per cell):")
+print(predictions['error_mask'])
+
+print("\nDetected Noisy Labels:")
+print(predictions['noise_mask'])
+
+print("\nQuality Scores:")
+print(predictions['quality_scores'])
+
+# =============================================================================
+# 6. Save/Load Model
+# =============================================================================
+
+# Save
+model.save('unidq_model.pt')
+print("\nModel saved to unidq_model.pt")
+
+# Load
+loaded_model = UNIDQ.load('unidq_model.pt')
+print("Model loaded successfully!")
