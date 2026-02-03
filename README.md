@@ -3,7 +3,7 @@
 [![PyPI version](https://badge.fury.io/py/unidq.svg)](https://badge.fury.io/py/unidq)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Paper](https://img.shields.io/badge/Paper-VLDB%202026-green.svg)](https://vldb.org/)
+
 
 **UNIDQ** is a unified transformer-based architecture for multi-task tabular data quality. A single model handles 6 data quality tasks simultaneously, replacing the need for multiple specialized tools.
 
